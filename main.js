@@ -615,7 +615,7 @@ function InitWebGL()
 
     sphereDrawers = [];
     for (let i = 0; i < num_spheres; i++) {
-        const radius = Math.random() * (0.4 - 0.1) + 0.1;
+        const radius = Math.random() * (0.3 - 0.1) + 0.1;
         const position = {
             x: Math.random() * (2 - 2 * radius) - (1 - radius),
             y: Math.random() * (2 - 2 * radius) - (1 - radius),
@@ -790,6 +790,22 @@ window.onload = function() {
         transZ = 3;
         rotX = 0;
         rotY = 0;
+        sphereDrawers.forEach((sphereDrawer) => {
+            const radius = Math.random() * (0.3 - 0.1) + 0.1;
+            const position = {
+                x: Math.random() * (2 - 2 * radius) - (1 - radius),
+                y: Math.random() * (2 - 2 * radius) - (1 - radius),
+                z: Math.random() * (2 - 2 * radius) - (1 - radius)
+            };
+            const velocity = {
+                x: Math.random() * 0.02 - 0.01,
+                y: Math.random() * 0.02 - 0.01,
+                z: Math.random() * 0.02 - 0.01
+            };
+            sphereDrawer.radius = radius;
+            sphereDrawer.position = position;
+            sphereDrawer.velocity = velocity;
+        });
         UpdateProjectionMatrix();
         drawScene();
     });
@@ -846,14 +862,35 @@ function simulationStep() {
         sphereDrawer.velocity.y -= 0.0001 * document.getElementById("gravity").value; 
 
         // Handle collisions with the box
-        if (sphereDrawer.position.x - sphereDrawer.radius < -1 || sphereDrawer.position.x + sphereDrawer.radius > 1) {
-            sphereDrawer.velocity.x *= -1 * e;
+        if (sphereDrawer.position.x - sphereDrawer.radius < -1) {
+            if (sphereDrawer.velocity.x < 0) {
+                sphereDrawer.velocity.x *= -1 * e;
+            }
         }
-        if (sphereDrawer.position.y - sphereDrawer.radius < -1 || sphereDrawer.position.y + sphereDrawer.radius > 1) {
-            sphereDrawer.velocity.y *= -1 * e;
+        if (sphereDrawer.position.x + sphereDrawer.radius > 1) {
+            if (sphereDrawer.velocity.x > 0) {
+                sphereDrawer.velocity.x *= -1 * e;
+            }
         }
-        if (sphereDrawer.position.z - sphereDrawer.radius < -1 || sphereDrawer.position.z + sphereDrawer.radius > 1) {
-            sphereDrawer.velocity.z *= -1 * e;
+        if (sphereDrawer.position.y - sphereDrawer.radius < -1) {
+            if (sphereDrawer.velocity.y < 0) {
+                sphereDrawer.velocity.y *= -1 * e;
+            }
+        }
+        if (sphereDrawer.position.y + sphereDrawer.radius > 1) {
+            if (sphereDrawer.velocity.y > 0) {
+                sphereDrawer.velocity.y *= -1 * e;
+            }
+        }
+        if (sphereDrawer.position.z - sphereDrawer.radius < -1) {
+            if (sphereDrawer.velocity.z < 0) {
+                sphereDrawer.velocity.z *= -1 * e;
+            }
+        }
+        if (sphereDrawer.position.z + sphereDrawer.radius > 1) {
+            if (sphereDrawer.velocity.z > 0) {
+                sphereDrawer.velocity.z *= -1 * e;
+            }
         }
 
         // Handle collisions with other spheres
