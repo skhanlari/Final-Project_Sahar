@@ -62,6 +62,26 @@ var boxFS = `
 	}
 `;
 
+// Vertex shader source code
+const lightViewVS = `
+	attribute vec3 pos;
+	uniform mat4 mvp;
+	void main()
+	{
+		gl_Position = mvp * vec4(pos,1);
+	}
+`;
+// Fragment shader source code
+var lightViewFS = `
+	precision mediump float;
+	uniform vec3 clr1;
+	uniform vec3 clr2;
+	void main()
+	{
+		gl_FragColor = gl_FrontFacing ? vec4(clr1,1) : vec4(clr2,1);
+	}
+`;
+
 // Compile shaders and create program
 function compileShader(source, type, wgl=gl) {
     const shader = wgl.createShader(type);
@@ -94,6 +114,18 @@ function MatrixMult( A, B )
 	}
 	return C;
 }
+
+function createBuffer(data, type, usage) {
+    const buffer = gl.createBuffer();
+    gl.bindBuffer(type, buffer);
+    gl.bufferData(type, data, usage);
+    return buffer;
+}
+
+function degToRad(degrees) {
+    return degrees * Math.PI / 180;
+}
+
 
 function GetModelViewBox(translationX, translationY, translationZ, rotationX, rotationY )
 {
@@ -163,7 +195,7 @@ function GetModelViewSphere(translationX, translationY, translationZ, rotationX,
         0, 0, 0, 1
     ];
     var rot = MatrixMult(rotY, rotX);
-    var modelView = MatrixMult(rot, transXY); // first translate along the XY plane
+    var modelView = MatrixMult(rot, transXY); // first translate along the XY plane then rotate
     modelView = MatrixMult(transZ, modelView); // then translate along the Z axis
 	return modelView;
 }
@@ -184,13 +216,9 @@ class BoxDrawer {
         }
         gl.useProgram(this.prog);
 		
-		// Get the ids of the uniform variables in the shaders
 		this.mvp = gl.getUniformLocation( this.prog, 'mvp' );
 		
-		// Get the ids of the vertex attributes in the shaders
 		this.vertPos = gl.getAttribLocation( this.prog, 'pos' );
-		
-		// Create the buffer objects
 		
 		this.vertbuffer = gl.createBuffer();
 		var pos = [
@@ -226,6 +254,167 @@ class BoxDrawer {
 	}
 }
 
+
+var lightView;
+
+class LightView
+{
+	constructor()
+	{
+		this.canvas = document.getElementById("lightcontrol");
+		this.canvas.oncontextmenu = function() {return false;};
+		this.gl = this.canvas.getContext("webgl", {antialias: false, depth: true});	// Initialize the GL context
+		if (!this.gl) {
+			alert("Unable to initialize WebGL. Your browser or machine may not support it.");
+			return;
+		}
+		
+		this.gl.clearColor(0.33,0.33,0.33,0);
+		this.gl.enable(gl.DEPTH_TEST);
+		
+		this.rotX = 0;
+		this.rotY = 0;
+		this.posZ = 5;
+		
+		this.resCircle = 32;
+		this.resArrow = 16;
+		this.buffer = this.gl.createBuffer();
+		var data = [];
+		for ( var i=0; i<=this.resCircle; ++i ) {
+			var a = 2 * Math.PI * i / this.resCircle;
+			var x = Math.cos(a);
+			var y = Math.sin(a);
+			data.push( x * .9 );
+			data.push( y * .9 );
+			data.push( 0 );
+			data.push( x );
+			data.push( y );
+			data.push( 0 );
+		}
+		for ( var i=0; i<=this.resCircle; ++i ) {
+			var a = 2 * Math.PI * i / this.resCircle;
+			var x = Math.cos(a);
+			var y = Math.sin(a);
+			data.push( x );
+			data.push( y );
+			data.push( -.05 );
+			data.push( x );
+			data.push( y );
+			data.push( 0.05 );
+		}
+		for ( var i=0; i<=this.resArrow; ++i ) {
+			var a = 2 * Math.PI * i / this.resArrow;
+			var x = Math.cos(a) * .07;
+			var y = Math.sin(a) * .07;
+			data.push( x );
+			data.push( y );
+			data.push( -1 );
+			data.push( x );
+			data.push( y );
+			data.push( 0 );
+		}
+		data.push( 0 );
+		data.push( 0 );
+		data.push( -1.2 );
+		for ( var i=0; i<=this.resArrow; ++i ) {
+			var a = 2 * Math.PI * i / this.resArrow;
+			var x = Math.cos(a) * .15;
+			var y = Math.sin(a) * .15;
+			data.push( x );
+			data.push( y );
+			data.push( -0.9 );
+		}
+		this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.buffer);
+		this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(data), this.gl.STATIC_DRAW);
+		
+		
+		this.canvas.style.width  = "";
+		this.canvas.style.height = "";
+		const pixelRatio = window.devicePixelRatio || 1;
+		this.canvas.width  = pixelRatio * this.canvas.clientWidth;
+		this.canvas.height = pixelRatio * this.canvas.clientHeight;
+		const width  = (this.canvas.width  / pixelRatio);
+		const height = (this.canvas.height / pixelRatio);
+		this.canvas.style.width  = width  + 'px';
+		this.canvas.style.height = height + 'px';
+		this.gl.viewport( 0, 0, this.canvas.width, this.canvas.height );
+		this.proj = ProjectionMatrix( this.canvas, this.posZ, 30 );
+		
+		
+        this.vertexShader = compileShader(lightViewVS, this.gl.VERTEX_SHADER, this.gl);
+        this.fragmentShader = compileShader(lightViewFS, this.gl.FRAGMENT_SHADER, this.gl);
+        this.prog = this.gl.createProgram();
+        this.gl.attachShader(this.prog, this.vertexShader);
+        this.gl.attachShader(this.prog, this.fragmentShader);
+        this.gl.linkProgram(this.prog);
+        if (!this.gl.getProgramParameter(this.prog, this.gl.LINK_STATUS)) {
+            console.error('Unable to initialize the shader program: ' + this.gl.getProgramInfoLog(this.prog));
+        }
+        this.gl.useProgram(this.prog);
+		this.mvp = this.gl.getUniformLocation( this.prog, 'mvp' );
+		this.clr1 = this.gl.getUniformLocation( this.prog, 'clr1' );
+		this.clr2 = this.gl.getUniformLocation( this.prog, 'clr2' );
+		this.vertPos = this.gl.getAttribLocation( this.prog, 'pos' );
+		
+		this.draw();
+		this.updateLightDir();
+		
+		this.canvas.onmousedown = function() {
+			var cx = event.clientX;
+			var cy = event.clientY;
+			lightView.canvas.onmousemove = function() {
+				lightView.rotY += (cx - event.clientX)/lightView.canvas.width*5;
+				lightView.rotX += (cy - event.clientY)/lightView.canvas.height*5;
+				cx = event.clientX;
+				cy = event.clientY;
+				lightView.draw();
+				lightView.updateLightDir();
+			}
+		}
+		this.canvas.onmouseup = this.canvas.onmouseleave = function() {
+			lightView.canvas.onmousemove = null;
+		}
+	}
+	
+	updateLightDir()
+	{
+		var cy = Math.cos( this.rotY );
+		var sy = Math.sin( this.rotY );
+		var cx = Math.cos( this.rotX );
+		var sx = Math.sin( this.rotX );
+        sphereDrawers.forEach((sphereDrawer) => {
+            sphereDrawer.setLightDir(-sy, cy * sx, cy * cx);
+        });
+		drawScene();
+	}
+	
+	draw()
+	{
+		this.gl.clear( this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT );
+		
+		this.gl.bindBuffer( this.gl.ARRAY_BUFFER, this.buffer );
+		this.gl.vertexAttribPointer( this.vertPos, 3, this.gl.FLOAT, false, 0, 0 );
+		this.gl.enableVertexAttribArray( this.buffer );
+
+		this.gl.useProgram( this.prog );
+		var mvp = MatrixMult( this.proj, [ 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,this.posZ,1 ] );
+		this.gl.uniformMatrix4fv( this.mvp, false, mvp );
+		this.gl.uniform3f( this.clr1, 0.6,0.6,0.6 );
+		this.gl.uniform3f( this.clr2, 0,0,0 );
+		this.gl.drawArrays( this.gl.TRIANGLE_STRIP, 0, this.resCircle*2+2 );
+
+		var mv  = GetModelViewBox( 0, 0, this.posZ, this.rotX, this.rotY );
+		var mvp = MatrixMult( this.proj, mv );
+		this.gl.uniformMatrix4fv( this.mvp, false, mvp );
+		this.gl.uniform3f( this.clr1, 1,1,1 );
+		this.gl.drawArrays( this.gl.TRIANGLE_STRIP, 0, this.resCircle*2+2 );
+		this.gl.drawArrays( this.gl.TRIANGLE_STRIP, this.resCircle*2+2, this.resCircle*2+2 );
+		this.gl.uniform3f( this.clr1, 0,0,0 );
+		this.gl.uniform3f( this.clr2, 1,1,1 );
+		this.gl.drawArrays( this.gl.TRIANGLE_STRIP, this.resCircle*4+4, this.resArrow*2+2 );
+		this.gl.drawArrays( this.gl.TRIANGLE_FAN, this.resCircle*4+4 + this.resArrow*2+2, this.resArrow+2 );
+	}
+}
 
 // Initialize sphere data
 function createSphere(radius, latitudeBands, longitudeBands) {
@@ -287,221 +476,6 @@ function createSphere(radius, latitudeBands, longitudeBands) {
         indices
     };
 }
-
-function createBuffer(data, type, usage) {
-    const buffer = gl.createBuffer();
-    gl.bindBuffer(type, buffer);
-    gl.bufferData(type, data, usage);
-    return buffer;
-}
-
-function degToRad(degrees) {
-    return degrees * Math.PI / 180;
-}
-
-var lightView;
-
-class LightView
-{
-	constructor()
-	{
-		this.canvas = document.getElementById("lightcontrol");
-		this.canvas.oncontextmenu = function() {return false;};
-		this.gl = this.canvas.getContext("webgl", {antialias: false, depth: true});	// Initialize the GL context
-		if (!this.gl) {
-			alert("Unable to initialize WebGL. Your browser or machine may not support it.");
-			return;
-		}
-		
-		// Initialize settings
-		this.gl.clearColor(0.33,0.33,0.33,0);
-		this.gl.enable(gl.DEPTH_TEST);
-		
-		this.rotX = 0;
-		this.rotY = 0;
-		this.posZ = 5;
-		
-		this.resCircle = 32;
-		this.resArrow = 16;
-		this.buffer = this.gl.createBuffer();
-		var data = [];
-		for ( var i=0; i<=this.resCircle; ++i ) {
-			var a = 2 * Math.PI * i / this.resCircle;
-			var x = Math.cos(a);
-			var y = Math.sin(a);
-			data.push( x * .9 );
-			data.push( y * .9 );
-			data.push( 0 );
-			data.push( x );
-			data.push( y );
-			data.push( 0 );
-		}
-		for ( var i=0; i<=this.resCircle; ++i ) {
-			var a = 2 * Math.PI * i / this.resCircle;
-			var x = Math.cos(a);
-			var y = Math.sin(a);
-			data.push( x );
-			data.push( y );
-			data.push( -.05 );
-			data.push( x );
-			data.push( y );
-			data.push( 0.05 );
-		}
-		for ( var i=0; i<=this.resArrow; ++i ) {
-			var a = 2 * Math.PI * i / this.resArrow;
-			var x = Math.cos(a) * .07;
-			var y = Math.sin(a) * .07;
-			data.push( x );
-			data.push( y );
-			data.push( -1 );
-			data.push( x );
-			data.push( y );
-			data.push( 0 );
-		}
-		data.push( 0 );
-		data.push( 0 );
-		data.push( -1.2 );
-		for ( var i=0; i<=this.resArrow; ++i ) {
-			var a = 2 * Math.PI * i / this.resArrow;
-			var x = Math.cos(a) * .15;
-			var y = Math.sin(a) * .15;
-			data.push( x );
-			data.push( y );
-			data.push( -0.9 );
-		}
-		this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.buffer);
-		this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(data), this.gl.STATIC_DRAW);
-		
-		// Set the viewport size
-		this.canvas.style.width  = "";
-		this.canvas.style.height = "";
-		const pixelRatio = window.devicePixelRatio || 1;
-		this.canvas.width  = pixelRatio * this.canvas.clientWidth;
-		this.canvas.height = pixelRatio * this.canvas.clientHeight;
-		const width  = (this.canvas.width  / pixelRatio);
-		const height = (this.canvas.height / pixelRatio);
-		this.canvas.style.width  = width  + 'px';
-		this.canvas.style.height = height + 'px';
-		this.gl.viewport( 0, 0, this.canvas.width, this.canvas.height );
-		this.proj = ProjectionMatrix( this.canvas, this.posZ, 30 );
-		
-		// Compile the shader program
-        this.vertexShader = compileShader(lightViewVS, this.gl.VERTEX_SHADER, this.gl);
-        this.fragmentShader = compileShader(lightViewFS, this.gl.FRAGMENT_SHADER, this.gl);
-        this.prog = this.gl.createProgram();
-        this.gl.attachShader(this.prog, this.vertexShader);
-        this.gl.attachShader(this.prog, this.fragmentShader);
-        this.gl.linkProgram(this.prog);
-        if (!this.gl.getProgramParameter(this.prog, this.gl.LINK_STATUS)) {
-            console.error('Unable to initialize the shader program: ' + this.gl.getProgramInfoLog(this.prog));
-        }
-        this.gl.useProgram(this.prog);
-		this.mvp = this.gl.getUniformLocation( this.prog, 'mvp' );
-		this.clr1 = this.gl.getUniformLocation( this.prog, 'clr1' );
-		this.clr2 = this.gl.getUniformLocation( this.prog, 'clr2' );
-		this.vertPos = this.gl.getAttribLocation( this.prog, 'pos' );
-		
-		this.draw();
-		this.updateLightDir();
-		
-		this.canvas.onmousedown = function() {
-			var cx = event.clientX;
-			var cy = event.clientY;
-			lightView.canvas.onmousemove = function() {
-				lightView.rotY += (cx - event.clientX)/lightView.canvas.width*5;
-				lightView.rotX += (cy - event.clientY)/lightView.canvas.height*5;
-				cx = event.clientX;
-				cy = event.clientY;
-				lightView.draw();
-				lightView.updateLightDir();
-			}
-		}
-		this.canvas.onmouseup = this.canvas.onmouseleave = function() {
-			lightView.canvas.onmousemove = null;
-		}
-	}
-	
-	updateLightDir()
-	{
-		var cy = Math.cos( this.rotY );
-		var sy = Math.sin( this.rotY );
-		var cx = Math.cos( this.rotX );
-		var sx = Math.sin( this.rotX );
-        sphereDrawers.forEach((sphereDrawer) => {
-            sphereDrawer.setLightDir(-sy, cy * sx, cy * cx);
-        });
-		/* setLightDir( -sy, cy*sx, -cy*cx ); */
-		//console.log( -sy, cy*sx, -cy*cx)
-		drawScene();
-	}
-	
-	draw()
-	{
-		// Clear the screen and the depth buffer.
-		this.gl.clear( this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT );
-		
-		this.gl.bindBuffer( this.gl.ARRAY_BUFFER, this.buffer );
-		this.gl.vertexAttribPointer( this.vertPos, 3, this.gl.FLOAT, false, 0, 0 );
-		this.gl.enableVertexAttribArray( this.buffer );
-
-		this.gl.useProgram( this.prog );
-		var mvp = MatrixMult( this.proj, [ 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,this.posZ,1 ] );
-		this.gl.uniformMatrix4fv( this.mvp, false, mvp );
-		this.gl.uniform3f( this.clr1, 0.6,0.6,0.6 );
-		this.gl.uniform3f( this.clr2, 0,0,0 );
-		this.gl.drawArrays( this.gl.TRIANGLE_STRIP, 0, this.resCircle*2+2 );
-
-		var mv  = GetModelViewBox( 0, 0, this.posZ, this.rotX, this.rotY );
-		var mvp = MatrixMult( this.proj, mv );
-		this.gl.uniformMatrix4fv( this.mvp, false, mvp );
-		this.gl.uniform3f( this.clr1, 1,1,1 );
-		this.gl.drawArrays( this.gl.TRIANGLE_STRIP, 0, this.resCircle*2+2 );
-		this.gl.drawArrays( this.gl.TRIANGLE_STRIP, this.resCircle*2+2, this.resCircle*2+2 );
-		this.gl.uniform3f( this.clr1, 0,0,0 );
-		this.gl.uniform3f( this.clr2, 1,1,1 );
-		this.gl.drawArrays( this.gl.TRIANGLE_STRIP, this.resCircle*4+4, this.resArrow*2+2 );
-		this.gl.drawArrays( this.gl.TRIANGLE_FAN, this.resCircle*4+4 + this.resArrow*2+2, this.resArrow+2 );
-	}
-}
-
-// Vertex shader source code
-const lightViewVS = `
-	attribute vec3 pos;
-	uniform mat4 mvp;
-	void main()
-	{
-		gl_Position = mvp * vec4(pos,1);
-	}
-`;
-// Fragment shader source code
-var lightViewFS = `
-	precision mediump float;
-	uniform vec3 clr1;
-	uniform vec3 clr2;
-	void main()
-	{
-		gl_FragColor = gl_FrontFacing ? vec4(clr1,1) : vec4(clr2,1);
-	}
-`;
-
-function ProjectionMatrix( c, z, fov_angle=60 )
-{
-	var r = c.width / c.height;
-	var n = (z - 1.74);
-	const min_n = 0.001;
-	if ( n < min_n ) n = min_n;
-	var f = (z + 1.74);;
-	var fov = 3.145 * fov_angle / 180;
-	var s = 1 / Math.tan( fov/2 );
-	return [
-		s/r, 0, 0, 0,
-		0, s, 0, 0,
-		0, 0, (n+f)/(f-n), 1,
-		0, 0, -2*n*f/(f-n), 0
-	];
-}
-
-
 
 class SphereDrawer {
     constructor(gl, radius, position, textureUrl, velocity) {
@@ -582,11 +556,9 @@ class SphereDrawer {
             1, 0, 0, 0,
             0, 1, 0, 0,
             0, 0, 1, 0,
-            0, 0, this.position.z, 1
+            0, 0, this.position.z, 1 //put the ball in position z
         ];
         modelViewMatrix = MatrixMult(modelViewMatrix, transZaddmat);
-
-        //console.log("draw");
 
         this.gl.uniformMatrix4fv(this.uProjectionMatrix, false, projectionMatrix);
         this.gl.uniformMatrix4fv(this.uModelViewMatrix, false, modelViewMatrix);
@@ -624,13 +596,13 @@ class SphereDrawer {
 var boxDrawer;
 var sphereDrawers;
 var canvas, gl;
-var perspectiveMatrix;	// perspective projection matrix
+var perspectiveMatrix;	
 var num_spheres = 5;
 var rotX=0, rotY=0, transZ=3, autorot=0;
-// Called once to initialize
+
 function InitWebGL()
 {
-	// Initialize the WebGL canvas
+	
 	canvas = document.getElementById("canvas");
 	gl = canvas.getContext("webgl");
 	if (!gl) {
@@ -638,11 +610,9 @@ function InitWebGL()
 		return;
 	}
 
-	// Initialize settings
 	gl.clearColor(0,0,0,1);
 	gl.enable(gl.DEPTH_TEST);
 
-	// Initialize the programs and buffers for drawing
     sphereDrawers = [];
     for (let i = 0; i < num_spheres; i++) {
         const radius = Math.random() * (0.4 - 0.1) + 0.1;
@@ -656,7 +626,7 @@ function InitWebGL()
             y: Math.random() * 0.02 - 0.01,
             z: Math.random() * 0.02 - 0.01
         };
-        const textureUrl = "texture.jpg"; 
+        const textureUrl = "texture.png"; 
         const sphereDrawer = new SphereDrawer(gl, radius, position, textureUrl, velocity);
         sphereDrawers.push(sphereDrawer);
     }
@@ -669,7 +639,6 @@ function InitWebGL()
 }
 
 
-// Called every time the window size is changed.
 function UpdateCanvasSize()
 {
 	canvas.style.width  = "100%";
@@ -686,6 +655,23 @@ function UpdateCanvasSize()
 }
 
 perspectiveMatrix = mat4.create();
+
+function ProjectionMatrix( c, z, fov_angle=60 )
+{
+	var r = c.width / c.height;
+	var n = (z - 1.74);
+	const min_n = 0.001;
+	if ( n < min_n ) n = min_n;
+	var f = (z + 1.74);;
+	var fov = 3.145 * fov_angle / 180;
+	var s = 1 / Math.tan( fov/2 );
+	return [
+		s/r, 0, 0, 0,
+		0, s, 0, 0,
+		0, 0, (n+f)/(f-n), 1,
+		0, 0, -2*n*f/(f-n), 0
+	];
+}
 
 function UpdateProjectionMatrix()
 {
@@ -712,6 +698,9 @@ function checkCollision(sphere1, sphere2) {
     return distance < (sphere1.radius + sphere2.radius);
 }
 
+// Coefficient of restitution
+var e = parseFloat(document.getElementById("restitution").value);
+
 function handleCollision(sphere1, sphere2) {
     const dx = sphere2.position.x - sphere1.position.x;
     const dy = sphere2.position.y - sphere1.position.y;
@@ -734,8 +723,6 @@ function handleCollision(sphere1, sphere2) {
     // If spheres are moving away from each other, no collision response is needed
     if (velocityAlongNormal > 0) return;
 
-    // Coefficient of restitution (1 for elastic collision)
-    const e = 1;
 
     // Calculate impulse scalar
     const impulse = (-(1 + e) * velocityAlongNormal) / (1 / sphere1.mass + 1 / sphere2.mass);
@@ -822,10 +809,19 @@ window.onload = function() {
         Animation(true);
     });
 
+    document.getElementById('gravity').addEventListener('input', function() {
+        document.getElementById('gravity-value').textContent = this.value;
+    });
+
+    document.getElementById('restitution').addEventListener('input', function() {
+        document.getElementById('restitution-value').textContent = this.value;
+        e = parseFloat(this.value);
+    });
+
     document.getElementById('num_spheres').addEventListener('input', function() {
         num_spheres = this.value;
         document.getElementById('spheres_counter').textContent = num_spheres;
-        //reset the animation
+        
         Animation(false);
         InitWebGL();
         drawScene();
@@ -845,24 +841,27 @@ function simulationStep() {
         sphereDrawer.position.x += sphereDrawer.velocity.x;
         sphereDrawer.position.y += sphereDrawer.velocity.y;
         sphereDrawer.position.z += sphereDrawer.velocity.z;
+        
+                                             // value of the gravity
+        sphereDrawer.velocity.y -= 0.0001 * document.getElementById("gravity").value; 
 
         // Handle collisions with the box
         if (sphereDrawer.position.x - sphereDrawer.radius < -1 || sphereDrawer.position.x + sphereDrawer.radius > 1) {
-            sphereDrawer.velocity.x *= -1;
+            sphereDrawer.velocity.x *= -1 * e;
         }
         if (sphereDrawer.position.y - sphereDrawer.radius < -1 || sphereDrawer.position.y + sphereDrawer.radius > 1) {
-            sphereDrawer.velocity.y *= -1;
+            sphereDrawer.velocity.y *= -1 * e;
         }
         if (sphereDrawer.position.z - sphereDrawer.radius < -1 || sphereDrawer.position.z + sphereDrawer.radius > 1) {
-            sphereDrawer.velocity.z *= -1;
+            sphereDrawer.velocity.z *= -1 * e;
         }
 
         // Handle collisions with other spheres
         for (let j = index + 1; j < sphereDrawers.length; j++) {
             if (checkCollision(sphereDrawer, sphereDrawers[j])) {
-                // Play the collision sound
+                
                 if(document.getElementById('sound').checked){
-                    // Load the collision sound
+                   
                     const collisionSound = new Audio('collision.mp3');
                     collisionSound.play();
                 }
